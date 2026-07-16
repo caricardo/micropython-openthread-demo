@@ -74,8 +74,8 @@ mpremote connect /dev/ttyACM0 repl
 Copy `boot.py` and `app.py` to the board:
 
 ```bash
-mpremote connect /dev/ttyACM0 fs cp boot.py :boot.py
 mpremote connect /dev/ttyACM0 fs cp app.py :app.py
+mpremote connect /dev/ttyACM0 fs cp boot.py :boot.py
 ```
 
 Reset:

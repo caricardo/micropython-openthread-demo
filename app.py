@@ -10,7 +10,7 @@ RGB_PIN = 8
 RGB_COUNT = 1
 HTTP_PORT = 80
 
-SERVICE_INSTANCE = "esp32-rgb"
+SERVICE_INSTANCE_PREFIX = "esp32-rgb"
 SERVICE_TYPE = "_http._tcp"
 
 # Limit brightness to avoid blinding full-power RGB.
@@ -292,8 +292,11 @@ def register_http_service():
     try:
         import openthread
 
+        uid = machine.unique_id().hex().lower()
+        service_instance = "{}-{}".format(SERVICE_INSTANCE_PREFIX, uid)
+
         openthread.srp_client_add_service(
-            SERVICE_INSTANCE,
+            service_instance,
             SERVICE_TYPE,
             HTTP_PORT,
             0,
@@ -304,7 +307,7 @@ def register_http_service():
             },
         )
 
-        print("http srp service:", SERVICE_INSTANCE + "." + SERVICE_TYPE)
+        print("http srp service:", service_instance + "." + SERVICE_TYPE)
 
     except Exception as exc:
         print("warning: http srp service failed:", exc)
