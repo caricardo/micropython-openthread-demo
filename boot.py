@@ -28,6 +28,21 @@ SRP_WATCHDOG_STALE_MS = (SRP_LEASE - 30) * 1000
 SRP_WATCHDOG_UNREGISTERED_MS = 60000
 SRP_WATCHDOG_RESTART_DELAY_MS = 500
 
+# Optional boot-time Thread factory reset input. Disabled by default.
+#
+# With FACTORY_RESET_DRIVE_PIN = None, connect FACTORY_RESET_SENSE_PIN
+# to GND and hold it while the board boots. To use two isolated GPIO pads,
+# set FACTORY_RESET_DRIVE_PIN to a second GPIO and short the two pads.
+# The reset erases OpenThread persistent data, including the active dataset
+# and SRP key. boot.py/app.py and the rest of the filesystem are preserved.
+FACTORY_RESET_ENABLED = False
+FACTORY_RESET_SENSE_PIN = 4
+FACTORY_RESET_DRIVE_PIN = None
+FACTORY_RESET_ACTIVE_LEVEL = 0
+FACTORY_RESET_HOLD_MS = 3000
+FACTORY_RESET_SAMPLE_MS = 25
+FACTORY_RESET_RELEASE_STABLE_MS = 500
+
 APP_AUTOSTART = True
 # Use app.py or main.py for user code, not simultaneously.
 APP_FILE = "app.py"
@@ -98,6 +113,112 @@ def get_mcu_model():
 def get_host_name():
     uid = machine.unique_id().hex().lower()
     return "{}-{}".format(get_mcu_model(), uid)
+
+
+def factory_reset_contact_active(pin):
+    return pin.value() == FACTORY_RESET_ACTIVE_LEVEL
+
+
+def factory_reset_pull():
+    if FACTORY_RESET_ACTIVE_LEVEL == 0:
+        return machine.Pin.PULL_UP
+    if FACTORY_RESET_ACTIVE_LEVEL == 1:
+        return machine.Pin.PULL_DOWN
+    raise ValueError("factory reset active level must be 0 or 1")
+
+
+def release_factory_reset_pins(sense_pin, drive_pin):
+    try:
+        sense_pin.init(machine.Pin.IN, factory_reset_pull())
+    except Exception:
+        pass
+
+    if drive_pin is not None:
+        try:
+            drive_pin.init(machine.Pin.IN)
+        except Exception:
+            pass
+
+
+def wait_factory_reset_release(sense_pin):
+    stable_since = None
+
+    while True:
+        now = time.ticks_ms()
+
+        if factory_reset_contact_active(sense_pin):
+            stable_since = None
+        elif stable_since is None:
+            stable_since = now
+        elif time.ticks_diff(now, stable_since) >= FACTORY_RESET_RELEASE_STABLE_MS:
+            return
+
+        time.sleep_ms(FACTORY_RESET_SAMPLE_MS)
+
+
+def check_factory_reset(openthread):
+    if not FACTORY_RESET_ENABLED:
+        return False
+
+    sense_pin = None
+    drive_pin = None
+
+    try:
+        if (
+            FACTORY_RESET_DRIVE_PIN is not None
+            and FACTORY_RESET_DRIVE_PIN == FACTORY_RESET_SENSE_PIN
+        ):
+            raise ValueError("factory reset pins must be different")
+
+        sense_pin = machine.Pin(
+            FACTORY_RESET_SENSE_PIN,
+            machine.Pin.IN,
+            factory_reset_pull(),
+        )
+
+        if FACTORY_RESET_DRIVE_PIN is not None:
+            drive_pin = machine.Pin(
+                FACTORY_RESET_DRIVE_PIN,
+                machine.Pin.OUT,
+                value=0 if FACTORY_RESET_ACTIVE_LEVEL == 0 else 1,
+            )
+
+        if not factory_reset_contact_active(sense_pin):
+            return False
+
+        print(
+            "factory reset: contact detected; hold for {} ms".format(
+                FACTORY_RESET_HOLD_MS,
+            )
+        )
+
+        deadline = time.ticks_add(time.ticks_ms(), FACTORY_RESET_HOLD_MS)
+
+        while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+            if not factory_reset_contact_active(sense_pin):
+                print("factory reset: cancelled")
+                return False
+
+            time.sleep_ms(FACTORY_RESET_SAMPLE_MS)
+
+        print("factory reset: erasing OpenThread persistent data")
+        openthread.erase_persistent()
+        print("factory reset: complete; release reset contacts")
+
+        wait_factory_reset_release(sense_pin)
+        release_factory_reset_pins(sense_pin, drive_pin)
+        time.sleep_ms(250)
+        machine.reset()
+        return True
+
+    except Exception as exc:
+        print("factory reset check failed:", exc)
+        return False
+
+    finally:
+        # Keep both pads high-impedance after a cancelled or failed check.
+        if sense_pin is not None:
+            release_factory_reset_pins(sense_pin, drive_pin)
 
 
 _thread_registry = {}
@@ -928,6 +1049,11 @@ def boot_thread_webrepl():
     print("host:", host)
 
     openthread.init()
+
+    # erase_persistent() requires an initialized OpenThread instance. Perform
+    # the optional contact reset before reading or starting the saved dataset.
+    if check_factory_reset(openthread):
+        return
 
     # This check must happen after init() and before start(). Starting Thread
     # without a dataset can cause ESP-IDF to generate its development fallback.
