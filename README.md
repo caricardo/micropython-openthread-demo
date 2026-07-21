@@ -1,25 +1,40 @@
-# MicroPython OpenThread Demo for ESP32-C6
+# MicroPython OpenThread for ESP32-C6
 
-Proof-of-concept MicroPython OpenThread demo for ESP32-C6.
+[![MicroPython](https://img.shields.io/badge/MicroPython-ESP32--C6-2b2728)](https://micropython.org/)
+[![OpenThread](https://img.shields.io/badge/OpenThread-IPv6%20mesh-00a98f)](https://openthread.io/)
+[![IEEE 802.15.4](https://img.shields.io/badge/radio-IEEE%20802.15.4-4c6ef5)](https://www.espressif.com/en/products/socs/esp32-c6)
+[![GitHub release](https://img.shields.io/github/v/release/caricardo/micropython-openthread-demo?include_prereleases)](https://github.com/caricardo/micropython-openthread-demo/releases)
 
-It demonstrates:
+Custom MicroPython firmware and reference application for **ESP32-C6** using the native **IEEE 802.15.4** radio to join an **OpenThread** mesh. The demo includes **Thread IPv6**, **SRP/DNS-SD service registration**, **mDNS discovery through an OpenThread Border Router (OTBR)**, **IPv6 WebREPL**, browser-based Wi-Fi provisioning for the Thread Active Dataset, an SRP recovery watchdog, and an HTTP RGB LED service.
 
-* Thread IPv6 connectivity
-* SRP service registration
-* IPv6 WebREPL
-* HTTP RGB LED control over Thread
+> Status: proof of concept. This is not an official MicroPython, Espressif, or OpenThread distribution.
+
+## Features
+
+- Native ESP32-C6 IEEE 802.15.4 radio
+- Router-eligible, non-sleepy Thread device
+- IPv6 sockets over the Thread interface
+- Unique EUI-64-based device and service names
+- SRP client registration and DNS-SD/mDNS discovery through OTBR
+- IPv6 WebREPL on TCP port 8266
+- Temporary Wi-Fi access point for first-boot Thread dataset provisioning
+- SRP watchdog that recovers stale client registrations
+- Optional boot-time GPIO factory reset for OpenThread persistent settings
+- HTTP RGB LED demo on TCP port 80
+- Prebuilt merged firmware image and source-build instructions
 
 ## Tested setup
 
-* ESP32-C6 board: [WeAct ESP32-C6-MiNi](https://github.com/WeActStudio/WeActStudio.ESP32C6-MINI)
-* Radio: native ESP32-C6 IEEE 802.15.4
-* OpenThread Border Router: SMLIGHT SLZB-07MG24
-* Thread network devices: only the SMLIGHT SLZB-07MG24 border router and this ESP32-C6 board were used during testing
-* ESP32-C6 mode: active, non-sleepy Thread device
-* Client systems: Linux and Windows
-* RGB LED: onboard LED on GPIO8
+- Board: [WeAct ESP32-C6-MiNi](https://github.com/WeActStudio/WeActStudio.ESP32C6-MINI)
+- Border router hardware: SMLIGHT SLZB-07MG24
+- Border router software: OpenThread Border Router
+- Radio: native ESP32-C6 IEEE 802.15.4
+- Client systems: Linux and Windows
+- RGB LED: onboard NeoPixel on GPIO8
 
-## Repository contents
+Other ESP32-C6 boards and OTBR implementations may work, but have not all been tested.
+
+## Repository layout
 
 ```text
 .
@@ -30,186 +45,146 @@ It demonstrates:
     └── ESP32_GENERIC_C6_OT.bin
 ```
 
-`boot.py` starts OpenThread, sets the Thread interface as the lwIP default route,
-registers WebREPL with SRP, starts IPv6 WebREPL, and optionally starts `app.py`.
-
-`app.py` starts a small HTTP RGB LED server over Thread IPv6.
+- `boot.py` initializes OpenThread, provisions the dataset when missing, configures SRP and IPv6 WebREPL, starts the SRP watchdog, and optionally runs `app.py`.
+- `app.py` registers a unique `_http._tcp` service and starts the RGB HTTP server.
+- `firmware/ESP32_GENERIC_C6_OT.bin` is a merged image containing the bootloader, partition table, and MicroPython firmware.
 
 ## Requirements
 
-* mpremote
-* esptool
+Install:
 
-Connect the board and check the serial port:
+- Python 3
+- `mpremote`
+- `esptool`
+
+Find the serial port:
 
 ```bash
 ls /dev/ttyACM*
 ```
 
-The examples below use `/dev/ttyACM0`. Change the port if your board appears
-under a different device name.
+The commands below use `/dev/ttyACM0`.
 
-## Flash firmware
+## Quick start
 
-Erase flash:
+### 1. Erase and flash the firmware
 
 ```bash
 esptool.py --chip esp32c6 -p /dev/ttyACM0 erase_flash
+
+esptool.py --chip esp32c6 -p /dev/ttyACM0 -b 460800 \
+    write_flash -z 0x0 firmware/ESP32_GENERIC_C6_OT.bin
 ```
 
-Flash the prebuilt merged firmware image:
-
-```bash
-esptool.py --chip esp32c6 -p /dev/ttyACM0 -b 460800 write_flash -z 0x0 firmware/ESP32_GENERIC_C6_OT.bin
-```
-
-Open REPL:
-
-```bash
-mpremote connect /dev/ttyACM0 repl
-```
-
-## Upload demo files
-
-Copy `boot.py` and `app.py` to the board:
+### 2. Upload the runtime scripts
 
 ```bash
 mpremote connect /dev/ttyACM0 fs cp app.py :app.py
 mpremote connect /dev/ttyACM0 fs cp boot.py :boot.py
-```
-
-Reset:
-
-```bash
 mpremote connect /dev/ttyACM0 reset
 ```
 
-## Configure Thread dataset
+### 3. Provision the Thread Active Dataset
 
-The board needs a valid Thread Active Dataset before it can join your Thread
-network.
+When no valid dataset exists, `boot.py` starts a temporary Wi-Fi access point.
 
-Export the active dataset from OTBR:
+Default settings:
+
+```text
+SSID:     esp32c6-<device-eui64>-thread-setup
+Password: threadsetup
+URL:      http://192.168.4.1/
+```
+
+Connect to the access point, open the URL, paste the hexadecimal Thread Active Dataset TLVs, and submit the form. The board stores the dataset in OpenThread persistent settings and reboots.
+
+Export the Active Dataset from an OTBR container:
 
 ```bash
 docker exec otbr ot-ctl dataset active -x
 ```
 
-Copy the dataset hex string, then paste it in the MicroPython REPL:
+Do not publish a real Thread dataset. It contains network credentials.
 
-```python
-import openthread
-import machine
-
-openthread.init()
-openthread.stop()
-
-openthread.dataset_set("<paste dataset hex here>")
-
-machine.reset()
-```
-
-Example shape:
-
-```python
-openthread.dataset_set("0e080000000000010000000300001234...")
-```
-
-Do not commit or publish a real Thread dataset. It contains network credentials.
-
-## Expected boot log
-
-After reset, the log should show Thread attach, SRP registration, DNS setup,
-WebREPL startup, and the RGB HTTP demo:
+## Expected boot output
 
 ```text
-uid: ...
+uid: 0123456789abcdef
 model: esp32c6
-host: esp32c6-...
+host: esp32c6-0123456789abcdef
+thread dataset: configured
 thread default netif: ok
-thread state: detached
-thread state: child
 srp lease: {'srp_key_lease': 1800, 'srp_lease': 300, 'srp_ttl': 300}
-srp host: esp32c6-...
-webrepl6: ws://esp32c6-....local:8266/
+srp host: esp32c6-0123456789abcdef
+srp service: esp32c6-0123456789abcdef-webrepl._webrepl._tcp
+thread state: child
+webrepl6: ws://esp32c6-0123456789abcdef.local:8266/
 app thread: started app.py
+http srp service: esp32-rgb-0123456789abcdef._http._tcp
 rgb http: http://[::]:80/
+srp watchdog: started
 ```
 
-## Check OpenThread from REPL
+The Thread role may become `child`, `router`, or `leader`.
+
+## OpenThread diagnostics from MicroPython
 
 ```python
 import openthread
 
 print(openthread.version())
 print(openthread.state())
+print(openthread.status())
 print(openthread.ipaddr())
+print(openthread.diagnostics())
 print(openthread.srp_client())
+print(openthread.srp_client_events(clear=False))
 ```
 
-Expected version:
+Runtime helpers exposed by `boot.py`:
 
-```text
-micropython-openthread 0.0.1
+```python
+print(threads())
+print(srp_watchdog_status())
 ```
 
-The Thread role should eventually become:
-
-```text
-child
-```
-
-or, depending on configuration:
-
-```text
-router
-leader
-```
-
-## Check SRP registration on OTBR
+## Verify SRP and mDNS discovery
 
 On the OTBR host:
 
 ```bash
-docker exec -it otbr ot-ctl srp server host
-docker exec -it otbr ot-ctl srp server service
+docker exec otbr ot-ctl srp server host
+docker exec otbr ot-ctl srp server service
 ```
 
-Expected example:
+Expected service names are unique per board:
 
 ```text
-esp32c6-....default.service.arpa.
-    addresses: [fd00:1234:5678:1::32]
+esp32c6-<eui64>-webrepl._webrepl._tcp.default.service.arpa.
+esp32-rgb-<eui64>._http._tcp.default.service.arpa.
+```
 
-esp32-webrepl._webrepl._tcp.default.service.arpa.
-    port: 8266
+Browse the services from Linux with Avahi:
 
-esp32-rgb._http._tcp.default.service.arpa.
-    port: 80
+```bash
+avahi-browse --resolve --terminate _webrepl._tcp
+avahi-browse --resolve --terminate _http._tcp
+```
+
+Resolve the board hostname:
+
+```bash
+avahi-resolve-host-name -6 esp32c6-<eui64>.local
 ```
 
 ## WebREPL over Thread IPv6
 
-Start a local WebREPL web client from a directory containing `webrepl.html`:
-
-```bash
-python3 -m http.server 8080 --bind 127.0.0.1
-```
-
-Open:
+Open a WebREPL client and connect with either the mDNS hostname or an IPv6 literal:
 
 ```text
-http://127.0.0.1:8080/webrepl.html
-```
-
-Use the WebSocket URL printed by `boot.py`, or use the Thread IPv6 address:
-
-```text
+ws://esp32c6-<eui64>.local:8266/
 ws://[fd00:1234:5678:1::32]:8266/
 ```
-
-The WebREPL client was tested from Linux and Windows browsers. Use the IPv6
-literal form if local hostname resolution is not available on the client.
 
 Default demo password:
 
@@ -217,51 +192,48 @@ Default demo password:
 1234
 ```
 
-Change `WEBREPL_PASSWORD` in `boot.py` before using this on a real network.
+Change `WEBREPL_PASSWORD` before using the device on a real network.
 
 ## HTTP RGB demo
 
-`app.py` starts an HTTP server on port `80`.
+Open the service with the mDNS hostname:
 
-Use the IPv6 address from `openthread.ipaddr()` or OTBR SRP output.
+```text
+http://esp32c6-<eui64>.local/
+```
 
-Linux:
+Or use the IPv6 address directly:
 
 ```bash
-curl -g 'http://[fd00:1234:5678:1::32]/'
+curl -g -6 'http://[fd00:1234:5678:1::32]/status'
 ```
 
-Windows PowerShell:
-
-```powershell
-curl.exe 'http://[fd00:1234:5678:1::32]/'
-```
-
-A browser can also open the same IPv6 literal URL:
+Endpoints:
 
 ```text
-http://[fd00:1234:5678:1::32]/
+GET /                 RGB control page
+GET /status           Current color
+GET /set?hex=rrggbb    Set a color
+GET /off              Turn the LED off
+GET /test             Run a short RGB test
 ```
 
-Available paths:
+## Optional GPIO factory reset
 
-```text
-/
-/red
-/green
-/blue
-/magenta
-/white
-/off
+The factory-reset input is disabled by default:
+
+```python
+FACTORY_RESET_ENABLED = False
+FACTORY_RESET_SENSE_PIN = 4
+FACTORY_RESET_DRIVE_PIN = None
+FACTORY_RESET_HOLD_MS = 3000
 ```
 
-## Build firmware from source
+When enabled, short the configured sense pin to GND while the board boots and hold it for the configured duration. This erases the Thread dataset, SRP key, and other OpenThread persistent settings. It does not erase `boot.py`, `app.py`, or the MicroPython filesystem.
 
-The prebuilt firmware was produced from the MicroPython fork at
-[caricardo/micropython](https://github.com/caricardo/micropython), branch
-`dev/esp32-openthread`.
+## Build the firmware from source
 
-Clone the fork and switch to the OpenThread development branch:
+The firmware is built from the MicroPython fork and branch below:
 
 ```bash
 git clone https://github.com/caricardo/micropython.git
@@ -270,7 +242,7 @@ git checkout dev/esp32-openthread
 git submodule update --init --recursive
 ```
 
-Activate ESP-IDF first:
+Activate ESP-IDF 5.5.2:
 
 ```bash
 . ~/.espressif/tools/activate_idf_v5.5.2.sh
@@ -278,59 +250,17 @@ export PATH="$IDF_PATH/tools:$PATH"
 hash -r
 ```
 
-Build:
+Build and deploy:
 
 ```bash
 cd ports/esp32
 make BOARD=ESP32_GENERIC_C6_OT
+make BOARD=ESP32_GENERIC_C6_OT PORT=/dev/ttyACM0 deploy
 ```
 
-Flash from the source tree:
+### Build `mpy-cross` with the host compiler
 
-```bash
-make BOARD=ESP32_GENERIC_C6_OT \
-    PORT=/dev/ttyACM0 \
-    deploy
-```
-
-Open REPL:
-
-```bash
-mpremote connect /dev/ttyACM0 repl
-```
-
-## Create a merged firmware image
-
-Run this from `micropython/ports/esp32`:
-
-```bash
-python -m esptool --chip esp32c6 merge_bin \
-    -o ESP32_GENERIC_C6_OT.bin \
-    --flash_mode dio \
-    --flash_size 4MB \
-    --flash_freq 80m \
-    0x0 build-ESP32_GENERIC_C6_OT/bootloader/bootloader.bin \
-    0x8000 build-ESP32_GENERIC_C6_OT/partition_table/partition-table.bin \
-    0x10000 build-ESP32_GENERIC_C6_OT/micropython.bin
-```
-
-The merged image can then be flashed with the command from the `Flash firmware`
-section:
-
-```bash
-# NVS will be erased.
-esptool.py --chip esp32c6 -p /dev/ttyACM0 -b 460800 write_flash -z 0x0 firmware/ESP32_GENERIC_C6_OT.bin
-```
-
-## Fix mpy-cross build issues
-
-If the build fails while building `mpy-cross`, the ESP-IDF environment may have
-leaked cross-compiler variables or toolchain paths into the host build.
-
-`mpy-cross` is a host tool, so it must be built with the normal system compiler,
-not with the ESP32/RISC-V toolchain.
-
-From the MicroPython repository root:
+If ESP-IDF toolchain variables leak into the host build:
 
 ```bash
 cd micropython
@@ -344,24 +274,45 @@ env -u CC -u CXX -u AS -u AR -u LD \
     make -C mpy-cross
 ```
 
-Then build the ESP32-C6 firmware again:
+Then rebuild the ESP32-C6 target.
+
+## Create a merged firmware image
+
+From `micropython/ports/esp32`:
 
 ```bash
-cd ports/esp32
-make BOARD=ESP32_GENERIC_C6_OT
+python -m esptool --chip esp32c6 merge_bin \
+    -o ESP32_GENERIC_C6_OT.bin \
+    --flash_mode dio \
+    --flash_size 4MB \
+    --flash_freq 80m \
+    0x0 build-ESP32_GENERIC_C6_OT/bootloader/bootloader.bin \
+    0x8000 build-ESP32_GENERIC_C6_OT/partition_table/partition-table.bin \
+    0x10000 build-ESP32_GENERIC_C6_OT/micropython.bin
 ```
 
-## Notes
+## Security and limitations
 
-This is a proof-of-concept demo.
+- Change the default WebREPL and provisioning passwords.
+- Keep Thread Active Dataset credentials private.
+- The included firmware and scripts are a proof of concept and have not undergone a production security review.
+- SRP lease values in `boot.py` must match the OTBR server policy shown by `ot-ctl srp server lease`.
+- The optional factory reset erases the SRP key; old names may remain reserved on the SRP server until the key lease expires.
+- The demo runs as an always-on, router-eligible Thread device and is not optimized for battery operation.
 
-Parts of this repository and the related MicroPython / micropython-lib work were
-prepared with AI assistance, then built and tested on real ESP32-C6 and OTBR
-hardware.
+## Related source
 
-This repository contains demo files, usage notes, and optionally prebuilt
-firmware.
+OpenThread module and firmware development:
 
-Firmware and OpenThread module development lives in the MicroPython fork:
-[caricardo/micropython](https://github.com/caricardo/micropython), branch
-`dev/esp32-openthread`.
+- [caricardo/micropython](https://github.com/caricardo/micropython)
+- Branch: `dev/esp32-openthread`
+
+Parts of this repository and related MicroPython work were prepared with AI assistance, then built and tested on real ESP32-C6 and OTBR hardware.
+
+## License
+
+The original files in this repository are licensed under the MIT License.
+
+The prebuilt firmware contains third-party components, including MicroPython,
+ESP-IDF, and OpenThread, which remain subject to their respective licenses.
+See [LICENSE](LICENSE).
